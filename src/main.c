@@ -141,7 +141,10 @@ static int get_method(struct ubus_context *ctx, struct ubus_object *obj,
     blobmsg_add_string(&buf, "model", req_model);
     blobmsg_add_string(&buf, "sensor", req_sensor);
 
-    ubus_send_reply(ctx, req, buf.head);
+    syslog(LOG_INFO, "Sending data");
+    int ret = ubus_send_reply(ctx, req, buf.head);
+    //if (ret) syslog(LOG_INFO, "Failed to send data");  ?? wtf neveikia 
+    syslog(LOG_INFO, "Data sent");
 	blob_buf_free(&buf);
 
     return 0;
@@ -157,7 +160,7 @@ int main(void)
     int val = become_daemon(0);
     if (val) {
         print_error(ERROR_DAEMON);
-        fprintf(stdout, "No daemon");
+        syslog(stdout, "Daemon failed to start");
         return EXIT_FAILURE;
     }
 
@@ -181,8 +184,8 @@ int main(void)
     }
     uloop_run();
     ubus_free(ctx);
-    syslog(LOG_INFO, "Closing");
     uloop_done();
+    syslog(LOG_INFO, "Stopping");
 
     return EXIT_SUCCESS;
 }
