@@ -1,0 +1,1 @@
+/* Device enumeration is handled in main.c via libserialport */
