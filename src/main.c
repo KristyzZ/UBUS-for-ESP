@@ -8,6 +8,7 @@
 #include <libserialport.h>
 #include <libubox/blobmsg_json.h>
 #include <libubus.h>
+#include <libserialport.h>
 
 #include "become_daemon.h"
 #include "signal_handler.h"
@@ -24,16 +25,7 @@ static int get_method(struct ubus_context *ctx, struct ubus_object *obj,
 
 static int devices(struct ubus_context *ctx, struct ubus_object *obj,
                       struct ubus_request_data *req,
-                      const char *method, struct blob_attr *msg)
-{
-    (void)ctx;
-    (void)obj;
-    (void)req;
-    (void)method;
-    (void)msg;
-
-    return 0;
-}
+                      const char *method, struct blob_attr *msg);
 
 static int off_method(struct ubus_context *ctx, struct ubus_object *obj,
                       struct ubus_request_data *req,
@@ -90,6 +82,35 @@ static struct ubus_object esp_object = {
     .methods = esp_methods,
     .n_methods = ARRAY_SIZE(esp_methods),
 };
+
+static int devices(struct ubus_context *ctx, struct ubus_object *obj,
+                      struct ubus_request_data *req,
+                      const char *method, struct blob_attr *msg)
+{
+    struct sp_port **port_list;
+
+    syslog(LOG_INFO, "Getting port list");
+
+    enum sp_return result = sp_list_ports(&port_list);
+    if (result != SP_OK) {
+        syslog(LOG_ERR, "sp_list_ports() failed!");
+
+    }
+
+    int i;
+    for (i = 0; port_list[i] != NULL; i++) {
+        struct sp_port *port = port_list[i];
+        char *port_name = sp_get_port_name(port);
+        syslog(LOG_INFO, "Found port: %s", port_name);
+    }
+
+    syslog(LOG_INFO, "Found %d ports.", i);
+    syslog(LOG_INFO, "Freeing port list.");
+
+    sp_free_port_list(port_list);
+    
+    return 0;
+}
 
 static int on_method(struct ubus_context *ctx, struct ubus_object *obj,
                       struct ubus_request_data *req,
