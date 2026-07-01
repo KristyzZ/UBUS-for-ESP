@@ -94,17 +94,49 @@ static int devices(struct ubus_context *ctx, struct ubus_object *obj,
     enum sp_return result = sp_list_ports(&port_list);
     if (result != SP_OK) {
         syslog(LOG_ERR, "sp_list_ports() failed!");
-
+        return SP_ERR_FAIL;
     }
 
+    struct blob_buf buf_port = {};
+	blob_buf_init(&buf_port, 0);
+
+    //void *array = blobmsg_open_array(&buf_port, "ports");
     int i;
+
     for (i = 0; port_list[i] != NULL; i++) {
         struct sp_port *port = port_list[i];
+        
+        char *product = sp_get_port_usb_product(port);
+        if (!product) continue;
+        syslog(LOG_INFO, "Found product: %s", product);
+        
         char *port_name = sp_get_port_name(port);
+        if (!port_name) continue;
         syslog(LOG_INFO, "Found port: %s", port_name);
+        
+        int usb_vid, usb_pid;
+        enum sp_return vid_pid_result = sp_get_port_usb_vid_pid(port, &usb_vid, &usb_pid);
+        if (vid_pid_result != SP_OK) {
+            syslog(LOG_ERR, "sp_get_port_usb_vid_pid failed for %s", port_name);
+            continue;
+        }
+
+        void *table = blobmsg_open_table(&buf_port, product);
+
+        blobmsg_add_string(&buf_port, "port", port_name);
+        blobmsg_add_u32(&buf_port, "VID", usb_vid);
+        blobmsg_add_u32(&buf_port, "PID", usb_pid);
+
+        blobmsg_close_table(&buf_port, table);
     }
+    //blobmsg_close_array(&buf_port, array);
 
     syslog(LOG_INFO, "Found %d ports.", i);
+
+
+	ubus_send_reply(ctx, req, buf_port.head);
+	blob_buf_free(&buf_port);
+
     syslog(LOG_INFO, "Freeing port list.");
 
     sp_free_port_list(port_list);
@@ -164,7 +196,7 @@ static int get_method(struct ubus_context *ctx, struct ubus_object *obj,
 
     syslog(LOG_INFO, "Sending data");
     int ret = ubus_send_reply(ctx, req, buf.head);
-    //if (ret) syslog(LOG_INFO, "Failed to send data");  ?? wtf neveikia 
+    if (!ret) syslog(LOG_INFO, "Failed to send data");
     syslog(LOG_INFO, "Data sent");
 	blob_buf_free(&buf);
 
@@ -181,7 +213,7 @@ int main(void)
     int val = become_daemon(0);
     if (val) {
         print_error(ERROR_DAEMON);
-        syslog(stdout, "Daemon failed to start");
+        syslog(LOG_ERR, "Daemon failed to start");
         return EXIT_FAILURE;
     }
 
