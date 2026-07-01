@@ -8,7 +8,6 @@
 #include <libserialport.h>
 #include <libubox/blobmsg_json.h>
 #include <libubus.h>
-#include <libserialport.h>
 
 #include "become_daemon.h"
 #include "signal_handler.h"
@@ -29,16 +28,7 @@ static int devices(struct ubus_context *ctx, struct ubus_object *obj,
 
 static int off_method(struct ubus_context *ctx, struct ubus_object *obj,
                       struct ubus_request_data *req,
-                      const char *method, struct blob_attr *msg)
-{
-    (void)ctx;
-    (void)obj;
-    (void)req;
-    (void)method;
-    (void)msg;
-
-    return 0;
-}
+                      const char *method, struct blob_attr *msg);
 
 enum {
 	PIN_NAME,
@@ -54,13 +44,13 @@ enum {
     __GET_MAX
 };
 
-static const struct blobmsg_policy on_policy[__ON_MAX] = {
+static const struct blobmsg_policy on_off_policy[__ON_MAX] = {
 	[PIN_NAME]  = { .name = "pin", .type = BLOBMSG_TYPE_INT32 },
-    [PORT_NAME] = { .name = "port", .type = BLOBMSG_TYPE_INT32 },
+    [PORT_NAME] = { .name = "port", .type = BLOBMSG_TYPE_STRING },
 };
 
 static const struct blobmsg_policy get_policy[__GET_MAX] = {
-    [GET_PORT]   = { .name = "port",   .type = BLOBMSG_TYPE_INT32 },
+    [GET_PORT]   = { .name = "port",   .type = BLOBMSG_TYPE_STRING },
     [GET_PIN]    = { .name = "pin",    .type = BLOBMSG_TYPE_INT32 },
     [GET_MODEL]  = { .name = "model",  .type = BLOBMSG_TYPE_STRING },
     [GET_SENSOR] = { .name = "sensor", .type = BLOBMSG_TYPE_STRING },
@@ -68,8 +58,8 @@ static const struct blobmsg_policy get_policy[__GET_MAX] = {
 
 static const struct ubus_method esp_methods[] = {
     UBUS_METHOD_NOARG("devices", devices),
-    UBUS_METHOD("on", on_method, on_policy),
-    UBUS_METHOD("off", off_method, on_policy),
+    UBUS_METHOD("on", on_method, on_off_policy),
+    UBUS_METHOD("off", off_method, on_off_policy),
     UBUS_METHOD("get", get_method, get_policy),
 };
 
@@ -94,21 +84,21 @@ static int devices(struct ubus_context *ctx, struct ubus_object *obj,
     enum sp_return result = sp_list_ports(&port_list);
     if (result != SP_OK) {
         syslog(LOG_ERR, "sp_list_ports() failed!");
-        return SP_ERR_FAIL;
+        return UBUS_STATUS_UNKNOWN_ERROR;
     }
 
     struct blob_buf buf_port = {};
 	blob_buf_init(&buf_port, 0);
 
-    //void *array = blobmsg_open_array(&buf_port, "ports");
+    void *array = blobmsg_open_array(&buf_port, "ports");
     int i;
 
     for (i = 0; port_list[i] != NULL; i++) {
         struct sp_port *port = port_list[i];
         
-        char *product = sp_get_port_usb_product(port);
-        if (!product) continue;
-        syslog(LOG_INFO, "Found product: %s", product);
+        // char *product = sp_get_port_usb_product(port);
+        // if (!product) continue;
+        // syslog(LOG_INFO, "Found product: %s", product);
         
         char *port_name = sp_get_port_name(port);
         if (!port_name) continue;
@@ -121,7 +111,7 @@ static int devices(struct ubus_context *ctx, struct ubus_object *obj,
             continue;
         }
 
-        void *table = blobmsg_open_table(&buf_port, product);
+        void *table = blobmsg_open_table(&buf_port, NULL);
 
         blobmsg_add_string(&buf_port, "port", port_name);
         blobmsg_add_u32(&buf_port, "VID", usb_vid);
@@ -129,7 +119,7 @@ static int devices(struct ubus_context *ctx, struct ubus_object *obj,
 
         blobmsg_close_table(&buf_port, table);
     }
-    //blobmsg_close_array(&buf_port, array);
+    blobmsg_close_array(&buf_port, array);
 
     syslog(LOG_INFO, "Found %d ports.", i);
 
@@ -149,23 +139,53 @@ static int on_method(struct ubus_context *ctx, struct ubus_object *obj,
                       const char *method, struct blob_attr *msg)
 {
     struct blob_attr *tb[__ON_MAX];
-    blobmsg_parse(get_policy, __ON_MAX, tb, blob_data(msg), blob_len(msg));
+    int ret = blobmsg_parse(on_off_policy, __ON_MAX, tb, blob_data(msg), blob_len(msg));
+    if (ret) {
+        syslog(LOG_ERR, "Parsing failed");
+        return -1;
+    }
 
     if (!tb[PORT_NAME] || !tb[PIN_NAME])
         return UBUS_STATUS_INVALID_ARGUMENT;
 
-    uint32_t req_port = blobmsg_get_u32(tb[PORT_NAME]);
+    const char *req_port = blobmsg_get_string(tb[PORT_NAME]);
     uint32_t req_pin = blobmsg_get_u32(tb[PIN_NAME]);
 
     struct blob_buf buf = {};
 	
 	blob_buf_init(&buf, 0);
 
-    blobmsg_add_u32(&buf, "port", req_port);
+    blobmsg_add_string(&buf, "port", req_port);
     blobmsg_add_u32(&buf, "pin", req_pin);
 
     ubus_send_reply(ctx, req, buf.head);
 	blob_buf_free(&buf);
+
+    return 0;
+}
+
+static int off_method(struct ubus_context *ctx, struct ubus_object *obj,
+                      struct ubus_request_data *req,
+                      const char *method, struct blob_attr *msg)
+{
+    struct blob_attr *tb[__ON_MAX];
+    blobmsg_parse(get_policy, __ON_MAX, tb, blob_data(msg), blob_len(msg));
+
+    if (!tb[PORT_NAME] || !tb[PIN_NAME])
+        return UBUS_STATUS_INVALID_ARGUMENT;
+
+    const char *req_port = blobmsg_get_string(tb[PORT_NAME]);
+    uint32_t req_pin = blobmsg_get_u32(tb[PIN_NAME]);
+
+    struct blob_buf buf = {};
+	
+	blob_buf_init(&buf, 0);
+
+    blobmsg_add_string(&buf, "port", req_port);
+    blobmsg_add_u32(&buf, "pin", req_pin);
+
+    ubus_send_reply(ctx, req, buf.head);
+	blob_buf_free(&buf);    
 
     return 0;
 }
@@ -180,8 +200,8 @@ static int get_method(struct ubus_context *ctx, struct ubus_object *obj,
     if (!tb[GET_PORT] || !tb[GET_PIN] || !tb[GET_MODEL] || !tb[GET_SENSOR])
         return UBUS_STATUS_INVALID_ARGUMENT;
 
-    uint32_t req_port    = blobmsg_get_u32(tb[GET_PORT]);
-    uint32_t req_pin     = blobmsg_get_u32(tb[GET_PIN]);
+    const char *req_port   = blobmsg_get_string(tb[GET_PORT]);
+    uint32_t req_pin       = blobmsg_get_u32(tb[GET_PIN]);
     const char *req_model  = blobmsg_get_string(tb[GET_MODEL]);
     const char *req_sensor = blobmsg_get_string(tb[GET_SENSOR]);
 
@@ -189,14 +209,14 @@ static int get_method(struct ubus_context *ctx, struct ubus_object *obj,
 	
 	blob_buf_init(&buf, 0);
 
-    blobmsg_add_u32(&buf, "port", req_port);
+    blobmsg_add_string(&buf, "port", req_port);
     blobmsg_add_u32(&buf, "pin", req_pin);
     blobmsg_add_string(&buf, "model", req_model);
     blobmsg_add_string(&buf, "sensor", req_sensor);
 
     syslog(LOG_INFO, "Sending data");
     int ret = ubus_send_reply(ctx, req, buf.head);
-    if (!ret) syslog(LOG_INFO, "Failed to send data");
+    if (ret) syslog(LOG_ERR, "Failed to send data: %s", ubus_strerror(ret));
     syslog(LOG_INFO, "Data sent");
 	blob_buf_free(&buf);
 
