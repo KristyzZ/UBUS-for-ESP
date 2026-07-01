@@ -158,10 +158,36 @@ static int on_method(struct ubus_context *ctx, struct ubus_object *obj,
     blobmsg_add_string(&buf, "port", req_port);
     blobmsg_add_u32(&buf, "pin", req_pin);
 
+    struct sp_port *target = NULL;
+    enum sp_return result = sp_get_port_by_name(req_port, &target);
+    if (result != SP_OK) {
+        syslog(LOG_ERR, "Non-existent port: %s!", req_port);
+        ret = UBUS_STATUS_INVALID_ARGUMENT;
+        goto cleanup;
+    }
+
+    syslog(LOG_INFO, "Opening port %s", req_port);
+
+    sp_open(target, SP_MODE_READ_WRITE);
+    sp_set_baudrate(target, 9600);
+    syslog(LOG_INFO, "Sending reply to: %s", req_port);
+
+    char cmd[64];
+    snprintf(cmd, sizeof(cmd), "{\"action\": \"on\", \"pin\": %u}", req_pin);
+    result = sp_blocking_write(target, cmd, strlen(cmd), 1000);
+    if (result < 0) {
+        syslog(LOG_ERR, "Failed to write to %s!", req_port);
+        ret = UBUS_STATUS_SYSTEM_ERROR;
+        goto cleanup;
+    }
+    
     ubus_send_reply(ctx, req, buf.head);
+
+cleanup:
+    sp_close(target);
 	blob_buf_free(&buf);
 
-    return 0;
+    return ret;
 }
 
 static int off_method(struct ubus_context *ctx, struct ubus_object *obj,
